@@ -17,8 +17,12 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Restore OAuth files
         run: |
-          echo "${{ secrets.GOOGLE_CREDENTIALS }}" > credentials.json
-          echo "${{ secrets.GOOGLE_TOKEN }}" > token.json
+          cat > credentials.json << 'EOF'
+          ${{ secrets.GOOGLE_CREDENTIALS }}
+          EOF
+          cat > token.json << 'EOF'
+          ${{ secrets.GOOGLE_TOKEN }}
+          EOF
       - name: Run sync
         env:
           RECWELL_CALENDAR_ID: ${{ secrets.RECWELL_CALENDAR_ID }}

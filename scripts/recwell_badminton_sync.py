@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 import requests
 from bs4 import BeautifulSoup
 
+import json
+
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
@@ -16,16 +18,20 @@ LOCATION_FALLBACK = "UC Berkeley RecWell"
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 def auth_calendar():
-    with open("credentials.json", "r", encoding="utf-8") as f:
-        creds_json = f.read()
+    # Read verbatim JSON written by the workflow
     with open("token.json", "r", encoding="utf-8") as f:
-        token_json = f.read()
-    creds = Credentials.from_authorized_user_info(eval(token_json), SCOPES)
+        token_info = json.loads(f.read())
+
+    creds = Credentials.from_authorized_user_info(token_info, SCOPES)
+
     if not creds.valid and creds.refresh_token:
         creds.refresh(Request())
+        # persist refreshed token
         with open("token.json", "w", encoding="utf-8") as f:
             f.write(creds.to_json())
+
     return build("calendar", "v3", credentials=creds)
+
 
 def fetch_html(url: str) -> str:
     r = requests.get(url, timeout=30)

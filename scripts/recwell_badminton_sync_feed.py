@@ -16,7 +16,7 @@ CAL_LOC_FALLBACK = "UC Berkeley RecWell"
 
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 # PASTE the exact feed URL you saw in DevTools here:
-TEXT_FEED_URL = "https://events.berkeley.edu/live/widget/15/tag/Open%20Rec%20Badminton"
+TEXT_FEED_URL = "https://recwell.berkeley.edu/...YOUR-COPIED-URL..."
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
@@ -123,4 +123,118 @@ def parse_text_feed(txt: str):
             # if the block date already passed far in past, try next year
             if date_obj < today - timedelta(days=7):
                 date_obj = datetime(year+1, mon_i, day_i, tzinfo=TZ).date()
-        e
+        except Exception:
+            continue
+
+        block = lines[start_i+1:stop_i]
+        cur_loc, cur_ev = None, None
+
+        for i, l in enumerate(block):
+            # read location / event lines near a time
+            loc_m = loc_pat.match(l)
+            if loc_m:
+                cur_loc = loc_m.group("loc").strip()
+                continue
+            ev_m = event_pat.match(l)
+            if ev_m:
+                cur_ev = ev_m.group("ev").strip()
+                continue
+
+            t = time_range_pat.match(l)
+            if not t:
+                continue
+
+            s_raw = t.group("s")
+            e_raw = t.group("e")
+            ampm = t.group("ampm")  # may be None; we’ll infer
+
+            sh, sm = to_24h(s_raw, ampm)
+            eh, em = to_24h(e_raw, ampm)
+
+            start_dt = datetime(date_obj.year, date_obj.month, date_obj.day, sh, sm, tzinfo=TZ)
+            end_dt   = datetime(date_obj.year, date_obj.month, date_obj.day, eh, em, tzinfo=TZ)
+            if end_dt <= start_dt:
+                end_dt += timedelta(days=1)
+
+            if not (today <= start_dt.date() <= end_day):
+                continue
+
+            title = cur_ev or CAL_TITLE
+            loc   = cur_loc or CAL_LOC_FALLBACK
+
+            uid_src = f"{start_dt.isoformat()}|{end_dt.isoformat()}|{loc}|{title}"
+            uid = hashlib.sha1(uid_src.encode()).hexdigest()[:16]
+
+            events.append({
+                "title": title,
+                "location": loc,
+                "start": start_dt,
+                "end": end_dt,
+                "uid": uid
+            })
+
+    # de-dupe
+    seen, out = set(), []
+    for e in events:
+        if e["uid"] not in seen:
+            seen.add(e["uid"]); out.append(e)
+    return out
+
+def to_gcal(slot):
+    return {
+        "summary": slot["title"],
+        "location": slot["location"],
+        "start": {"dateTime": slot["start"].isoformat(), "timeZone": TIMEZONE},
+        "end":   {"dateTime": slot["end"].isoformat(),   "timeZone": TIMEZONE},
+        "description": "Source: RecWell Badminton (text feed)",
+        "extendedProperties": {"private": {"source":"recwell-badminton","recwell_uid":slot["uid"]}}
+    }
+
+def sync(service, calendar_id, slots):
+    now = datetime.now(TZ)
+    win_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    win_end = win_start + timedelta(days=WINDOW_DAYS+1)
+
+    # fetch existing
+    events, page = [], None
+    while True:
+        resp = service.events().list(
+            calendarId=calendar_id, timeMin=win_start.isoformat(),
+            timeMax=win_end.isoformat(), singleEvents=True, showDeleted=False,
+            pageToken=page
+        ).execute()
+        events += resp.get("items", [])
+        page = resp.get("nextPageToken")
+        if not page: break
+
+    existing_by_uid = {}
+    for ev in events:
+        ep = (ev.get("extendedProperties") or {}).get("private", {})
+        if ep.get("source") == "recwell-badminton" and "recwell_uid" in ep:
+            existing_by_uid[ep["recwell_uid"]] = ev
+
+    desired_by_uid = {s["uid"]: s for s in slots}
+
+    # upsert
+    for uid, s in desired_by_uid.items():
+        body = to_gcal(s)
+        if uid in existing_by_uid:
+            service.events().update(calendarId=calendar_id, eventId=existing_by_uid[uid]["id"], body=body).execute()
+        else:
+            service.events().insert(calendarId=calendar_id, body=body).execute()
+
+    # delete stale
+    for uid, ev in existing_by_uid.items():
+        if uid not in desired_by_uid:
+            service.events().delete(calendarId=calendar_id, eventId=ev["id"]).execute()
+
+def main():
+    cal_id = os.environ["RECWELL_CALENDAR_ID"]
+    txt = fetch_text()
+    slots = parse_text_feed(txt)
+    service = auth_calendar()
+    sync(service, cal_id, slots)
+    print(f"✅ Synced {len(slots)} events (text feed) for the next {WINDOW_DAYS} days.")
+
+if __name__ == "__main__":
+    main()

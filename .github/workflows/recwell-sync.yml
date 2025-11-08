@@ -1,9 +1,9 @@
-name: RecWell Badminton Sync
+name: RecWell Badminton Sync (Text Feed)
 
 on:
   schedule:
-    - cron: "15 15 * * *" # ~07:15 PT in standard time
-    - cron: "15 14 * * *" # ~07:15 PT in daylight time
+    - cron: "15 15 * * *"
+    - cron: "15 14 * * *"
   workflow_dispatch:
 
 jobs:
@@ -15,6 +15,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
+
       - name: Restore OAuth files
         run: |
           cat > credentials.json << 'EOF'
@@ -23,7 +24,8 @@ jobs:
           cat > token.json << 'EOF'
           ${{ secrets.GOOGLE_TOKEN }}
           EOF
-      - name: Run sync
+
+      - name: Run text-feed sync
         env:
           RECWELL_CALENDAR_ID: ${{ secrets.RECWELL_CALENDAR_ID }}
-        run: python scripts/recwell_badminton_sync.py
+        run: python scripts/recwell_badminton_sync_feed.py

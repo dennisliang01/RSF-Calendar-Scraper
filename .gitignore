@@ -1,0 +1,14 @@
+# Virtual environment
+.venv/
+
+# Local auth and secrets
+credentials.json
+token.json
+
+# Mac / Windows metadata
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc

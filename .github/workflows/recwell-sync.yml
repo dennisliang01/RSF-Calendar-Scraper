@@ -1,0 +1,25 @@
+name: RecWell Badminton Sync
+
+on:
+  schedule:
+    - cron: "15 15 * * *" # ~07:15 PT in standard time
+    - cron: "15 14 * * *" # ~07:15 PT in daylight time
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Restore OAuth files
+        run: |
+          echo "${{ secrets.GOOGLE_CREDENTIALS }}" > credentials.json
+          echo "${{ secrets.GOOGLE_TOKEN }}" > token.json
+      - name: Run sync
+        env:
+          RECWELL_CALENDAR_ID: ${{ secrets.RECWELL_CALENDAR_ID }}
+        run: python scripts/recwell_badminton_sync.py

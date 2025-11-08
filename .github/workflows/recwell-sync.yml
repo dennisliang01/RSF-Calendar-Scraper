@@ -1,4 +1,4 @@
-name: RecWell Badminton Sync (Text Feed)
+name: RecWell Badminton Sync
 
 on:
   schedule:
@@ -25,7 +25,7 @@ jobs:
           ${{ secrets.GOOGLE_TOKEN }}
           EOF
 
-      - name: Run text-feed sync
+      - name: Run HTML sync
         env:
           RECWELL_CALENDAR_ID: ${{ secrets.RECWELL_CALENDAR_ID }}
-        run: python scripts/recwell_badminton_sync_feed.py
+        run: python scripts/recwell_badminton_sync.py

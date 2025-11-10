@@ -94,7 +94,9 @@ def parse_livewhale_widget(html: str):
     soup = BeautifulSoup(html, "html.parser")
     tz = ZoneInfo(TIMEZONE)
     today = datetime.now(tz).date()
-    window_end = today + timedelta(days=6)
+    # Include events through the upcoming Sunday (local time)
+    days_until_sun = (6 - today.weekday()) % 7  # Monday=0 ... Sunday=6
+    window_end = today + timedelta(days=days_until_sun)
 
     def month_to_int(mon: str) -> int:
         mon = mon.lower().rstrip(".")
@@ -225,7 +227,11 @@ def sync(service, calendar_id, slots):
     tz = ZoneInfo(TIMEZONE)
     now = datetime.now(tz)
     window_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    window_end = window_start + timedelta(days=7)
+    # Query Google Calendar up to next Monday 00:00 (timeMax is exclusive),
+    # ensuring all Sunday events are included.
+    days_until_next_mon = (7 - window_start.weekday()) % 7 or 7
+    next_monday = (window_start + timedelta(days=days_until_next_mon)).replace(hour=0, minute=0, second=0, microsecond=0)
+    window_end = next_monday
 
     events, page = [], None
     while True:

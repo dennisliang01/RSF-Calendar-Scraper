@@ -12,6 +12,8 @@ from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 
 URL = "https://recwell.berkeley.edu/schedules-reservations/badminton/"
+# LiveWhale widget for Open Rec Badminton events. We add a cache-busting param
+# at request time to avoid CDN-stale responses.
 WIDGET_URL = "https://events.berkeley.edu/live/widget/15/tag/Open%20Rec%20Badminton"
 RECWELL_PAGE = URL
 TIMEZONE = "America/Los_Angeles"
@@ -35,6 +37,23 @@ def auth_calendar():
     return build("calendar", "v3", credentials=creds)
 
 
+def _cache_busted(url: str, key: str | None = None) -> str:
+    """Append a lightweight cache-busting query param.
+
+    By default, uses the current YYYYMMDD so repeated runs within the same day
+    won't spam the CDN but day-to-day updates get a fresh response. Override by
+    setting RECWELL_CACHE_BUST=timestamp to force a per-run timestamp.
+    """
+    bust_mode = (os.getenv("RECWELL_CACHE_BUST") or "day").lower()
+    if bust_mode in ("ts", "timestamp", "now"):
+        value = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    else:
+        value = datetime.utcnow().strftime("%Y%m%d")
+    param = key or "_cv"
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}{param}={value}"
+
+
 def fetch_html(url: str) -> str:
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
@@ -42,6 +61,9 @@ def fetch_html(url: str) -> str:
         "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://recwell.berkeley.edu/",
         "Connection": "keep-alive",
+        # Try to discourage intermediate caches from serving stale content
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
     }
     r = requests.get(url, headers=headers, timeout=30)
     r.raise_for_status()
@@ -108,8 +130,11 @@ def parse_livewhale_widget(html: str):
                 h = 0
         return h, m
 
+    # Accept headers like "Sun., Nov. 9" or "Sunday, November 9"
     day_pat = re.compile(
-        r"^(?P<dow>Mon|Monday|Tue|Tuesday|Wed|Wednesday|Thu|Thursday|Fri|Friday|Sat|Saturday|Sun|Sunday),\s*(?P<mon>Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December)\.?\s*(?P<day>\d{1,2})$",
+        r"^(?P<dow>Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)\.?\s*,\s*"
+        r"(?P<mon>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s*"
+        r"(?P<day>\d{1,2})$",
         re.I
     )
     events = []
@@ -139,6 +164,8 @@ def parse_livewhale_widget(html: str):
             # Strip audible labels that may be included in text
             loc_txt = re.sub(r"^(?:Location:?)\s*", "", loc_txt, flags=re.I)
             title_txt = re.sub(r"^(?:Event:?)\s*", "", title_txt, flags=re.I)
+            # Normalize punctuation in time strings (convert en/em dashes to hyphen)
+            time_txt = time_txt.replace("–", "-").replace("—", "-")
 
             # Extract time range like "Noon - 4 p.m." or "2 - 6 p.m."
             tm = re.search(r"(?P<s>(?:\d{1,2}(?::\d{2})?)|Noon|Midnight)\s*(?:-|–|—|to)\s*(?P<e>(?:\d{1,2}(?::\d{2})?)|Noon|Midnight)\s*(?P<ampm>a\.?m\.?|p\.?m\.?|am|pm)?", time_txt, re.I)
@@ -176,8 +203,12 @@ def parse_livewhale_widget(html: str):
             seen.add(e["uid"]); out.append(e)
     return out
 def gather_slots() -> list[dict]:
-    """Fetch and parse only the official events widget feed."""
-    widget_html = fetch_html(WIDGET_URL)
+    """Fetch and parse only the official events widget feed.
+
+    Adds a daily cache-busting parameter to ensure fresh content after updates.
+    Set RECWELL_CACHE_BUST=timestamp to force per-run cache busting.
+    """
+    widget_html = fetch_html(_cache_busted(WIDGET_URL))
     return parse_livewhale_widget(widget_html)
 
 def to_gcal(slot):

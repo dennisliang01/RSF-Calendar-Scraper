@@ -1,4 +1,4 @@
-import re, hashlib, os
+import re, hashlib, os, sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -136,7 +136,7 @@ def parse_livewhale_widget(html: str):
     day_pat = re.compile(
         r"^(?P<dow>Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)\.?\s*,\s*"
         r"(?P<mon>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s*"
-        r"(?P<day>\d{1,2})$",
+        r"(?P<day>\d{1,2})(?:\s*,\s*(?P<year>\d{4}))?$",
         re.I
     )
     events = []
@@ -172,10 +172,22 @@ def parse_livewhale_widget(html: str):
             # Extract time range like "Noon - 4 p.m." or "2 - 6 p.m."
             tm = re.search(r"(?P<s>(?:\d{1,2}(?::\d{2})?)|Noon|Midnight)\s*(?:-|–|—|to)\s*(?P<e>(?:\d{1,2}(?::\d{2})?)|Noon|Midnight)\s*(?P<ampm>a\.?m\.?|p\.?m\.?|am|pm)?", time_txt, re.I)
             if not tm:
-                continue
-            s_raw, e_raw, ampm = tm.group("s"), tm.group("e"), tm.group("ampm")
-            sh, sm = to_24h(s_raw, ampm)
-            eh, em = to_24h(e_raw, ampm)
+                # Fallback: allow am/pm on both sides and unicode dashes
+                alt = re.search(
+                    r"(?P<s>(?:\d{1,2}(?::\d{2})?)|Noon|Midnight)\s*(?P<sampm>a\.?m\.?|p\.?m\.?|am|pm)?\s*(?:-|–|—|to)\s*"
+                    r"(?P<e>(?:\d{1,2}(?::\d{2})?)|Noon|Midnight)\s*(?P<eampm>a\.?m\.?|p\.?m\.?|am|pm)?",
+                    time_txt,
+                    re.I,
+                )
+                if not alt:
+                    continue
+                tm = alt
+            s_raw, e_raw = tm.group("s"), tm.group("e")
+            gd = tm.groupdict()
+            sampm = gd.get("sampm") or gd.get("ampm")
+            eampm = gd.get("eampm") or gd.get("ampm")
+            sh, sm = to_24h(s_raw, sampm)
+            eh, em = to_24h(e_raw, eampm)
 
             start_dt = datetime(date_obj.year, date_obj.month, date_obj.day, sh, sm, tzinfo=tz)
             end_dt   = datetime(date_obj.year, date_obj.month, date_obj.day, eh, em, tzinfo=tz)
@@ -211,6 +223,12 @@ def gather_slots() -> list[dict]:
     Set RECWELL_CACHE_BUST=timestamp to force per-run cache busting.
     """
     widget_html = fetch_html(_cache_busted(WIDGET_URL))
+    if os.environ.get("RECWELL_DEBUG"):
+        try:
+            with open("debug_widget.html", "w", encoding="utf-8") as f:
+                f.write(widget_html)
+        except Exception:
+            pass
     return parse_livewhale_widget(widget_html)
 
 def to_gcal(slot):
@@ -264,7 +282,23 @@ def sync(service, calendar_id, slots):
             service.events().delete(calendarId=calendar_id, eventId=ev["id"]).execute()
 
 def main():
-    calendar_id = os.environ["RECWELL_CALENDAR_ID"]
+    # Accept calendar id from RECWELL_CALENDAR_ID env var or first CLI arg
+    calendar_id = os.environ.get("RECWELL_CALENDAR_ID")
+    if not calendar_id and len(sys.argv) > 1:
+        # allow: python recwell_badminton_sync.py <calendar_id>
+        calendar_id = sys.argv[1]
+
+    if not calendar_id:
+        print("ERROR: RECWELL_CALENDAR_ID environment variable is not set and no calendar id was provided as a command-line argument.")
+        print("")
+        print("Set it in your shell before running the script, for example (bash):")
+        print("  export RECWELL_CALENDAR_ID='your_calendar_id'")
+        print("")
+        print("Or pass it as the first argument:")
+        print("  python recwell_badminton_sync.py your_calendar_id")
+        # On Windows PowerShell use: $Env:RECWELL_CALENDAR_ID = 'your_calendar_id'
+        sys.exit(1)
+
     # Use the specified site with a fallback to related internal pages
     slots = gather_slots()
     service = auth_calendar()

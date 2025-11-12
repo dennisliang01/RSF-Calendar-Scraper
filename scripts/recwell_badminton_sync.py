@@ -79,7 +79,7 @@ def parse_slots(html: str):
 def discover_related_pages(start_url: str, html: str) -> list[str]:    return []
 def gather_slots_from_site(start_url: str) -> list[dict]:    return gather_slots()
 
-def parse_livewhale_widget(html: str):
+def parse_livewhale_widget(html: str, window_days: int | None = None):
     """Parse the events.berkeley LiveWhale widget HTML for Open Rec Badminton.
     Expected structure:
       <div class="lw_events_day">
@@ -94,9 +94,16 @@ def parse_livewhale_widget(html: str):
     soup = BeautifulSoup(html, "html.parser")
     tz = ZoneInfo(TIMEZONE)
     today = datetime.now(tz).date()
-    # Include events through the upcoming Sunday (local time)
-    days_until_sun = (6 - today.weekday()) % 7  # Monday=0 ... Sunday=6
-    window_end = today + timedelta(days=days_until_sun)
+    # By default we fetch all available dates. If window_days is provided
+    # (positive integer), limit parsed events to the next `window_days` days
+    # (inclusive). Historically this script only captured events through
+    # the upcoming Sunday; that behavior can be reproduced by setting
+    # RECWELL_WINDOW_DAYS=7. When None, no date-based filtering is applied.
+    if window_days is None:
+        window_end = None
+    else:
+        # include today through the next (window_days-1) days
+        window_end = today + timedelta(days=max(0, int(window_days) - 1))
 
     def month_to_int(mon: str) -> int:
         mon = mon.lower().rstrip(".")
@@ -194,7 +201,9 @@ def parse_livewhale_widget(html: str):
             if end_dt <= start_dt:
                 end_dt += timedelta(days=1)
 
-            if not (today <= start_dt.date() <= window_end):
+            # If window_end is None we accept all dates; otherwise only
+            # accept events whose start date is between today and window_end.
+            if window_end is not None and not (today <= start_dt.date() <= window_end):
                 continue
 
             title = title_txt or TITLE
@@ -229,7 +238,20 @@ def gather_slots() -> list[dict]:
                 f.write(widget_html)
         except Exception:
             pass
-    return parse_livewhale_widget(widget_html)
+    # Allow controlling the time window parsed (in days) via environment.
+    # If RECWELL_WINDOW_DAYS is not set, parse all available dates.
+    window_days = None
+    wd = os.environ.get("RECWELL_WINDOW_DAYS")
+    if wd:
+        try:
+            window_days = int(wd)
+            if window_days <= 0:
+                window_days = None
+        except Exception:
+            # ignore parse errors and treat as no limit
+            window_days = None
+
+    return parse_livewhale_widget(widget_html, window_days=window_days)
 
 def to_gcal(slot):
     return {

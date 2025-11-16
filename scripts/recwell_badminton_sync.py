@@ -272,6 +272,17 @@ def sync(service, calendar_id, slots):
     days_until_next_mon = (7 - window_start.weekday()) % 7 or 7
     next_monday = (window_start + timedelta(days=days_until_next_mon)).replace(hour=0, minute=0, second=0, microsecond=0)
     window_end = next_monday
+    if slots:
+        # Expand the sync window to every day represented in the scraped feed,
+        # ensuring existing events are updated instead of duplicated.
+        earliest_start = min(s["start"].astimezone(tz) for s in slots)
+        window_start = min(
+            window_start,
+            earliest_start.replace(hour=0, minute=0, second=0, microsecond=0),
+        )
+        latest_end = max(s["end"].astimezone(tz) for s in slots)
+        last_day = latest_end.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        window_end = max(window_end, last_day)
 
     events, page = [], None
     while True:
@@ -325,7 +336,9 @@ def main():
     slots = gather_slots()
     service = auth_calendar()
     sync(service, calendar_id, slots)
-    print(f"✅ Synced {len(slots)} events for the next 6 days.")
+    tz = ZoneInfo(TIMEZONE)
+    day_count = len({s["start"].astimezone(tz).date() for s in slots}) if slots else 0
+    print(f"✅ Synced {len(slots)} events across {day_count} day(s).")
 
 if __name__ == "__main__":
     _dry = os.environ.get("RECWELL_DRY_RUN", "").strip()
@@ -339,8 +352,6 @@ if __name__ == "__main__":
                 print(s)
     else:
         main()
-
-
 
 
 

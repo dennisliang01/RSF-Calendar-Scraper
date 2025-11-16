@@ -10,6 +10,7 @@ import json
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 
 URL = "https://recwell.berkeley.edu/schedules-reservations/badminton/"
 # LiveWhale widget for Open Rec Badminton events. We add a cache-busting param
@@ -28,11 +29,28 @@ def auth_calendar():
 
     creds = Credentials.from_authorized_user_info(token_info, SCOPES)
 
-    if not creds.valid and creds.refresh_token:
-        creds.refresh(Request())
-        # persist refreshed token
-        with open("token.json", "w", encoding="utf-8") as f:
-            f.write(creds.to_json())
+    if not creds.valid:
+        # Try to refresh using the saved refresh token.
+        if creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                # persist refreshed token
+                with open("token.json", "w", encoding="utf-8") as f:
+                    f.write(creds.to_json())
+            except RefreshError:
+                print("ERROR: OAuth token is expired or has been revoked.")
+                print("")
+                print("Regenerate a fresh token.json by running the OAuth bootstrap script:")
+                print("  python scripts/bootstrap_oauth.py")
+                print("")
+                print("Make sure you have a valid Google OAuth client in `credentials.json` (Desktop type).")
+                print("")
+                print("In CI, replace the stored token/secret with the new token.json contents or use a service account with calendar access.")
+                sys.exit(1)
+        else:
+            print("ERROR: No refresh token available in token.json; re-run the OAuth bootstrap to create one:")
+            print("  python scripts/bootstrap_oauth.py")
+            sys.exit(1)
 
     return build("calendar", "v3", credentials=creds)
 
